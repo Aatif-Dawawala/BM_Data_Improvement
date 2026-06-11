@@ -22,7 +22,7 @@ def deleteAllFiles():
         print(element.id)
         client.beta.files.delete(element.id)
 
-# deleteAllFiles();
+deleteAllFiles();
 
 for k in range(1, 2):
     output = ""
@@ -109,7 +109,7 @@ for obj in ids:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback about the background and facts of the lessons."},
+                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback about the background and facts of the lessons. Following the lesson are the quizzes associated with it. Give feedback on the answer option clarity, whether there are any mistakes in the answers or explanation, and whether the explanation is simple/clear or can be better."},
                     {
                         "type": "document",
                         "source": {
