@@ -24,7 +24,7 @@ def deleteAllFiles():
 
 deleteAllFiles();
 
-for k in range(1, 2):
+for k in range(0, 1):
     output = ""
     title = data["lessons"][k]["title"]
     responseInitial = requests.get(data["lessons"][k]["lessonUrl"]).json() # the index here represents the surah
@@ -77,19 +77,25 @@ for k in range(1, 2):
             responseThird = requests.get(responseInitial["quizzes"][j]["url"]).json()
 
             for i in range(len(responseThird["questions"])):
-                print(responseThird["questions"][i]["title"])
-
-                print(i)
-
-
                 
                 if responseThird["questions"][i]["answerType"] == "single":
-                    with open(f"./lesson_output/{title}.txt", "a", encoding="utf-8") as file:
-                        file.write(f"{responseThird["questions"][i]["title"]} \n")
+
+                    if responseInitial["quizzes"][j]["title"] == "Vocabulary" and "audioData" in responseThird["questions"][i]:
+                        with open(f"./lesson_output/{title}.txt", "a", encoding="utf-8") as file:
+                            file.write(f"{responseThird["questions"][i]["title"]} - {responseThird["questions"][i]["audioData"]["text"]}\n")
+
+                    else: 
+                        with open(f"./lesson_output/{title}.txt", "a", encoding="utf-8") as file:
+                            file.write(f"{responseThird["questions"][i]["title"]} \n")
                 
                     for k in range(len(responseThird["questions"][i]["choices"])):
                         with open(f"./lesson_output/{title}.txt", "a", encoding="utf-8") as file:
                             file.write(f"{responseThird["questions"][i]["choices"][k]["text"]} - {responseThird["questions"][i]["choices"][k]["isCorrect"]} \n")
+
+                    with open(f"./lesson_output/{title}.txt", "a", encoding="utf-8") as file:
+                        file.write(f"Explanation: {responseThird["questions"][i]["explanation"]} \n")
+            
+                
 
 ids = []
 
@@ -109,7 +115,7 @@ for obj in ids:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback about the background and facts of the lessons. Following the lesson are the quizzes associated with it. Give feedback on the answer option clarity, whether there are any mistakes in the answers or explanation, and whether the explanation is simple/clear or can be better."},
+                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback about the background and facts of the lessons. Following the lesson are the quizzes associated with it. Give feedback on the answer option clarity, whether there are any mistakes in the answers or explanation, and whether the explanation is simple/clear or can be better. Don't mention what is done well, just mention improvement points."},
                     {
                         "type": "document",
                         "source": {
@@ -133,7 +139,7 @@ print(client.beta.files.list())
 
 
 
-# Go through one lesson/quiz for a surah at a time and provide a single feedback file in MARKdown format
+# Go through one lesson/quiz for a surah at a time and provide a single feedback file in MARKdown format 
 # If the surah has multiple lessons name the feedback files with a similar naming pattern to the API (part 1, part 2)
 # Look into access aqqal GPT
 # look into testing multiple open source models against each other
