@@ -105,7 +105,7 @@ for file_path in directory_path.iterdir():
             file=(file_path.name, file, "text/plain"),
         )
     
-    ids.append({"id": uploaded.id, "title": file_path.name})
+    ids.append({"id": uploaded.id, "title": file_path.stem})
     
 for obj in ids:
     response = client.beta.messages.create(
@@ -115,7 +115,7 @@ for obj in ids:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback about the background and facts of the lessons. Following the lesson are the quizzes associated with it. Give feedback on the answer option clarity, whether there are any mistakes in the answers or explanation, and whether the explanation is simple/clear or can be better. Don't mention what is done well, just mention improvement points."},
+                    {"type": "text", "text": "The attached document is a lesson on a specific surah of the Quran. The lesson is made for English speaking learners, and is part of an app that allows users to quickly learn about the Quran on the go. Give feedback in markdown format about the background and facts of the lessons. Following the lesson are the quizzes associated with it. Give feedback on the answer option clarity, whether there are any mistakes in the answers or explanation, and whether the explanation is simple/clear or can be better. Don't mention what is done well, just mention improvement points."},
                     {
                         "type": "document",
                         "source": {
@@ -128,9 +128,8 @@ for obj in ids:
         ],
         betas=["files-api-2025-04-14"],
     )
-    print(response)
-    print(response.content[0].text)
-    with open(f"./lesson_analysis/{obj["title"]}", "w", encoding="utf-8") as file:
+
+    with open(f"./lesson_analysis/{obj["title"]}.md", "w", encoding="utf-8") as file:
         file.write(response.content[0].text)
     
 deleteAllFiles();
