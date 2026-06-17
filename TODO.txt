@@ -1,0 +1,9 @@
+# Go through one lesson/quiz for a surah at a time and provide a single feedback file in MARKdown format - DONE
+# If the surah has multiple lessons name the feedback files with a similar naming pattern to the API (part 1, part 2) - DONE
+# Look into access aqqal GPT - DONE
+# look into testing multiple open source models against each other
+# Look into openrouter for comparing LLMs
+# Evaluation on the model feedback
+
+# Phase two is to ask the model to improve the lesson based on the feedback it gave
+# Seperate system prompt that gives a score for a lesson so we can compare the score before and after lesson improvement

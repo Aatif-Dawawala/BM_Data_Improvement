@@ -3,6 +3,7 @@ import anthropic
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
@@ -131,6 +132,31 @@ for obj in ids:
 
     with open(f"./lesson_analysis/{obj["title"]}.md", "w", encoding="utf-8") as file:
         file.write(response.content[0].text)
+
+# headers = {"Authorization": f"Bearer {os.getenv("OPENROUTER_API_KEY")}"}
+
+# for file_path in directory_path.iterdir():
+#     with file_path.open("rb") as file:
+#         uploaded = requests.post("https://openrouter.ai/api/v1/files", files=file, headers=headers)
+
+#     ids.append({"id": uploaded.id, "title": file_path.stem})
+
+# for obj in ids:
+#     response = requests.post(
+#         url="https://openrouter.ai/api/v1/chat/completions",
+#         headers={
+#             "Authorization": f"Bearer {os.getenv("OPENROUTER_API_KEY")}"
+#         },
+#         data=json.dumps({
+#             "model": "~openai/gpt-latest",
+#             "messages": [
+#                 {
+#                     "role": "user",
+#                     "content": ""
+#                 }
+#             ]
+#         })
+#     )
     
 deleteAllFiles();
 
@@ -138,12 +164,3 @@ print(client.beta.files.list())
 
 
 
-# Go through one lesson/quiz for a surah at a time and provide a single feedback file in MARKdown format 
-# If the surah has multiple lessons name the feedback files with a similar naming pattern to the API (part 1, part 2)
-# Look into access aqqal GPT
-# look into testing multiple open source models against each other
-# Look into openrouter for comparing LLMs
-# Evaluation on the model feedback
-
-# Phase two is to ask the model to improve the lesson based on the feedback it gave
-# Seperate system prompt that gives a score for a lesson so we can compare the score before and after lesson improvement
