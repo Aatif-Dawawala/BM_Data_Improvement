@@ -8,22 +8,19 @@ Architecture:
   4. Combine lesson content feedback + all quiz feedback into one Markdown report
 
 Usage:
-    python review_pipeline.py --lesson l-001            # single lesson
-    python review_pipeline.py --lesson lc-002           # all 26 parts of Al-Baqara
-    python review_pipeline.py --lesson lc-002 --sample 5  # random 5 from Al-Baqara
-    python review_pipeline.py --course c-001 --sample 5   # random 5 from entire course
+    python review_pipeline.py --lesson l-001
+    python review_pipeline.py --lesson l-001 --sample 5   # random sample of 5 lessons from same surah
+    python review_pipeline.py --course c-001 --sample 5   # random sample across whole course
 """
-
-# Set up log file to see input and output for each agent & cost for each run
-# Tweak system prompt manually after checking if the feedback matches well with the content
-# Have AI raise PR with its changes to the lesson content
 
 import argparse
 import json
+import logging
 import os
 import random
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -41,10 +38,64 @@ load_dotenv()
 BASE_URL = "https://europe-west2-brilliantmuslim.cloudfunctions.net/mobile-api"
 COURSE_URL = f"{BASE_URL}/course?course_id=c-001"
 OUTPUT_DIR = Path("./lesson_reports")
+LOG_DIR = Path("./agent_logs")
 MODEL = "claude-sonnet-4-6"          # always use Sonnet 4.6 for inner calls; outer calls use same
 MAX_TOKENS = 2048
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# ---------------------------------------------------------------------------
+# Logging Setup
+# ---------------------------------------------------------------------------
+
+def setup_logger():
+    """
+    Creates a logger that writes to both the console (INFO+) and a
+    timestamped log file in LOG_DIR (DEBUG+, i.e. every agent call).
+
+    Log file name: agent_logs/run_YYYYMMDD_HHMMSS.log
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOG_DIR / f"run_{timestamp}.log"
+
+    logger = logging.getLogger("review_pipeline")
+    logger.setLevel(logging.DEBUG)
+
+    # File handler — verbose, captures everything including full agent I/O
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+
+    # Console handler — INFO and above only (progress messages, warnings)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(message)s"))
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    logger.info(f"Log file: {log_path.resolve()}")
+    return logger, log_path
+
+
+logger, _log_path = setup_logger()
+
+
+def _log_agent_call(agent_name: str, label: str, system: str, user: str, raw_output: str):
+    """Write a full agent call record (input + output) to the log file at DEBUG level."""
+    divider = "=" * 72
+    logger.debug(
+        "\n%s\nAGENT : %s\nLABEL : %s\n%s\n"
+        "--- SYSTEM PROMPT ---\n%s\n\n"
+        "--- USER INPUT ---\n%s\n\n"
+        "--- RAW OUTPUT ---\n%s\n%s\n",
+        divider, agent_name, label, divider,
+        system, user, raw_output, divider,
+    )
 
 # ---------------------------------------------------------------------------
 # Pydantic Models
@@ -103,7 +154,7 @@ def fetch_json(url: str) -> dict:
         r.raise_for_status()
         return r.json()
     except requests.RequestException as e:
-        print(f"  [WARN] Failed to fetch {url}: {e}")
+        logger.warning(f"  [WARN] Failed to fetch {url}: {e}")
         return {}
 
 
@@ -176,7 +227,7 @@ def fetch_single_lesson(lesson_id: str) -> Optional[LessonContent]:
     Fetch one individual lesson (l-XXX) and all its quizzes.
     Uses the /lesson endpoint.
     """
-    print(f"\n→ Fetching lesson {lesson_id}...")
+    logger.info(f"\n→ Fetching lesson {lesson_id}...")
     lesson_data = fetch_json(f"{BASE_URL}/lesson?lesson_id={lesson_id}")
     if not lesson_data:
         return None
@@ -188,7 +239,7 @@ def fetch_collection_sub_lesson_ids(collection_id: str) -> list[str]:
     Fetch a lesson-collection (lc-XXX) and return the list of individual
     sub-lesson IDs it contains.
     """
-    print(f"\n→ Fetching collection index {collection_id}...")
+    logger.info(f"\n→ Fetching collection index {collection_id}...")
     collection_data = fetch_json(f"{BASE_URL}/lesson-collection?collection_id={collection_id}")
     if not collection_data:
         return []
@@ -205,7 +256,7 @@ def fetch_collection_sub_lesson_ids(collection_id: str) -> list[str]:
         # Fallback: some collections embed lessonIds at the top level
         sub_ids = collection_data.get("lessonIds", [])
 
-    print(f"  → Found {len(sub_ids)} sub-lesson(s) in {collection_id}")
+    logger.info(f"  → Found {len(sub_ids)} sub-lesson(s) in {collection_id}")
     return sub_ids
 
 
@@ -223,13 +274,13 @@ def fetch_lesson(lesson_id: str) -> Optional[LessonContent]:
     if _is_collection_id(lesson_id):
         sub_ids = fetch_collection_sub_lesson_ids(lesson_id)
         if not sub_ids:
-            print(f"  [ERROR] Collection {lesson_id} returned no sub-lessons.")
+            logger.error(f"  [ERROR] Collection {lesson_id} returned no sub-lessons.")
             return None
         # Return the first sub-lesson as a representative; batch mode uses
         # review_collection() to iterate all of them.
-        print(f"  [INFO] Collection detected. Pass --lesson {lesson_id} with --sample N to review a subset,")
-        print(f"         or use --course c-001 --sample N to sample across the full course.")
-        print(f"  → Processing first sub-lesson: {sub_ids[0]}")
+        logger.info(f"  [INFO] Collection detected. Pass --lesson {lesson_id} with --sample N to review a subset,")
+        logger.info(f"         or use --course c-001 --sample N to sample across the full course.")
+        logger.info(f"  → Processing first sub-lesson: {sub_ids[0]}")
         return fetch_single_lesson(sub_ids[0])
     else:
         return fetch_single_lesson(lesson_id)
@@ -343,15 +394,18 @@ Return ONLY the JSON array, no preamble."""
 # Two-Agent Pipeline (Review → Guardrail → Review)
 # ---------------------------------------------------------------------------
 
-def _call_claude(system: str, user: str) -> str:
-    """Single Claude API call, returns text content."""
+def _call_claude(agent_name: str, label: str, system: str, user: str) -> str:
+    """Single Claude API call. Logs full input/output to the log file and returns text."""
+    logger.info(f"    [{agent_name}] running for {label}...")
     response = client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return response.content[0].text.strip()
+    raw_output = response.content[0].text.strip()
+    _log_agent_call(agent_name, label, system, user, raw_output)
+    return raw_output
 
 
 def _safe_parse_json(text: str) -> list | dict:
@@ -370,52 +424,53 @@ def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -
     Runs the Review → Guardrail → Revised Review loop.
     Returns the final list of issue dicts.
     """
-    print(f"    [1/3] Review Agent running for {label}...")
-    raw_review = _call_claude(system_prompt, content_payload)
+    # --- Step 1: Review Agent ---
+    raw_review = _call_claude("Review Agent [1/3]", label, system_prompt, content_payload)
 
     try:
         initial_issues = _safe_parse_json(raw_review)
         if not isinstance(initial_issues, list):
             initial_issues = []
     except (json.JSONDecodeError, ValueError) as e:
-        print(f"    [WARN] Review Agent JSON parse failed for {label}: {e}")
+        logger.warning(f"    [WARN] Review Agent JSON parse failed for {label}: {e}")
         initial_issues = []
 
     if not initial_issues:
-        print(f"    → No issues found in initial review for {label}.")
+        logger.info(f"    → No issues found in initial review for {label}.")
         return []
 
-    print(f"    [2/3] Guardrail Agent running for {label} ({len(initial_issues)} flags)...")
+    # --- Step 2: Guardrail Agent ---
+    logger.info(f"    [Guardrail Agent] evaluating {len(initial_issues)} flag(s) for {label}...")
     guardrail_payload = (
         f"Original content context:\n{content_payload}\n\n"
         f"First reviewer's flagged issues:\n{json.dumps(initial_issues, indent=2)}"
     )
-    raw_guardrail = _call_claude(GUARDRAIL_PROMPT, guardrail_payload)
+    raw_guardrail = _call_claude("Guardrail Agent [2/3]", label, GUARDRAIL_PROMPT, guardrail_payload)
 
     try:
         guardrail_result = _safe_parse_json(raw_guardrail)
         kept = guardrail_result.get("keep", []) if isinstance(guardrail_result, dict) else initial_issues
         added = guardrail_result.get("add", []) if isinstance(guardrail_result, dict) else []
     except (json.JSONDecodeError, ValueError, AttributeError) as e:
-        print(f"    [WARN] Guardrail JSON parse failed for {label}: {e}")
+        logger.warning(f"    [WARN] Guardrail JSON parse failed for {label}: {e}")
         kept, added = initial_issues, []
 
-    print(f"    [3/3] Revision Agent running for {label}...")
+    # --- Step 3: Revision Agent ---
     revision_payload = (
         f"Original content:\n{content_payload}\n\n"
         f"Guardrail output:\n{json.dumps({'keep': kept, 'add': added}, indent=2)}"
     )
-    raw_final = _call_claude(REVISION_PROMPT, revision_payload)
+    raw_final = _call_claude("Revision Agent [3/3]", label, REVISION_PROMPT, revision_payload)
 
     try:
         final_issues = _safe_parse_json(raw_final)
         if not isinstance(final_issues, list):
             final_issues = kept + added
     except (json.JSONDecodeError, ValueError) as e:
-        print(f"    [WARN] Revision Agent JSON parse failed for {label}: {e}")
+        logger.warning(f"    [WARN] Revision Agent JSON parse failed for {label}: {e}")
         final_issues = kept + added
 
-    print(f"    → Final: {len(final_issues)} issue(s) for {label}.")
+    logger.info(f"    → Final: {len(final_issues)} issue(s) for {label}.")
     return final_issues
 
 
@@ -543,10 +598,10 @@ def review_lesson(lesson_id: str) -> Optional[str]:
     """
     lesson = fetch_lesson(lesson_id)
     if not lesson:
-        print(f"  [ERROR] Could not fetch lesson {lesson_id}")
+        logger.error(f"  [ERROR] Could not fetch lesson {lesson_id}")
         return None
 
-    print(f"\n  Reviewing lesson content: {lesson.lesson_title}")
+    logger.info(f"\n  Reviewing lesson content: {lesson.lesson_title}")
 
     # --- Track 1: Lesson content review ---
     lesson_payload = serialize_lesson_for_review(lesson)
@@ -559,7 +614,7 @@ def review_lesson(lesson_id: str) -> Optional[str]:
     # --- Track 2: Per-quiz review (separate call per quiz type) ---
     quiz_results: list[tuple[QuizContent, list[dict]]] = []
     for quiz in lesson.quizzes:
-        print(f"\n  Reviewing quiz: {quiz.quiz_title} ({quiz.quiz_type_label})")
+        logger.info(f"\n  Reviewing quiz: {quiz.quiz_title} ({quiz.quiz_type_label})")
         quiz_payload = serialize_quiz_for_review(quiz)
         quiz_system = QUIZ_REVIEW_PROMPT.format(quiz_type=quiz.quiz_type_label)
         quiz_issues = run_two_agent_review(
@@ -578,7 +633,7 @@ def save_report(lesson_id: str, report_md: str):
     OUTPUT_DIR.mkdir(exist_ok=True)
     out_path = OUTPUT_DIR / f"{lesson_id}_review.md"
     out_path.write_text(report_md, encoding="utf-8")
-    print(f"\n  ✅ Report saved → {out_path}")
+    logger.info(f"\n  ✅ Report saved → {out_path}")
     return out_path
 
 
@@ -607,25 +662,25 @@ def main():
             # Expand collection to its sub-lesson IDs, then optionally sample
             sub_ids = fetch_collection_sub_lesson_ids(lesson_arg)
             if not sub_ids:
-                print(f"[ERROR] Could not resolve sub-lessons for collection {lesson_arg}")
+                logger.error(f"[ERROR] Could not resolve sub-lessons for collection {lesson_arg}")
                 sys.exit(1)
             if args.sample:
                 lesson_ids_to_review = random.sample(sub_ids, min(args.sample, len(sub_ids)))
-                print(f"Randomly selected {len(lesson_ids_to_review)} sub-lesson(s) from {lesson_arg}: {lesson_ids_to_review}")
+                logger.info(f"Randomly selected {len(lesson_ids_to_review)} sub-lesson(s) from {lesson_arg}: {lesson_ids_to_review}")
             else:
                 lesson_ids_to_review = sub_ids
-                print(f"Reviewing all {len(lesson_ids_to_review)} sub-lessons in collection {lesson_arg}.")
+                logger.info(f"Reviewing all {len(lesson_ids_to_review)} sub-lessons in collection {lesson_arg}.")
         else:
             # Single lesson ID — --sample is ignored (nothing to sample from)
             if args.sample:
-                print(f"[INFO] --sample is ignored when --lesson is a single lesson ID. Reviewing {lesson_arg} only.")
+                logger.info(f"[INFO] --sample is ignored when --lesson is a single lesson ID. Reviewing {lesson_arg} only.")
             lesson_ids_to_review = [lesson_arg]
 
     elif args.course:
-        print(f"Fetching course index from {args.course}...")
+        logger.info(f"Fetching course index from {args.course}...")
         course_data = fetch_json(f"{BASE_URL}/course?course_id={args.course}")
         if not course_data:
-            print("[ERROR] Could not fetch course data.")
+            logger.error("[ERROR] Could not fetch course data.")
             sys.exit(1)
 
         # Flatten all lesson IDs from the course
@@ -635,30 +690,30 @@ def main():
 
         if args.sample:
             lesson_ids_to_review = random.sample(all_lesson_ids, min(args.sample, len(all_lesson_ids)))
-            print(f"Randomly selected {len(lesson_ids_to_review)} lesson(s): {lesson_ids_to_review}")
+            logger.info(f"Randomly selected {len(lesson_ids_to_review)} lesson(s): {lesson_ids_to_review}")
         else:
             lesson_ids_to_review = all_lesson_ids
-            print(f"Reviewing all {len(lesson_ids_to_review)} lessons in course.")
+            logger.info(f"Reviewing all {len(lesson_ids_to_review)} lessons in course.")
 
-    print(f"\n{'='*60}")
-    print(f"Starting review of {len(lesson_ids_to_review)} lesson(s)...")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Starting review of {len(lesson_ids_to_review)} lesson(s)...")
+    logger.info(f"{'='*60}")
 
     for idx, lesson_id in enumerate(lesson_ids_to_review, 1):
-        print(f"\n[{idx}/{len(lesson_ids_to_review)}] Processing {lesson_id}...")
+        logger.info(f"\n[{idx}/{len(lesson_ids_to_review)}] Processing {lesson_id}...")
         report = review_lesson(lesson_id)
         if report:
             save_report(lesson_id, report)
         else:
-            print(f"  [SKIP] No report generated for {lesson_id}")
+            logger.warning(f"  [SKIP] No report generated for {lesson_id}")
 
         # Polite pause between lessons to avoid hammering both APIs
         if idx < len(lesson_ids_to_review):
             time.sleep(1)
 
-    print(f"\n{'='*60}")
-    print(f"Done. Reports saved to ./{OUTPUT_DIR}/")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Done. Reports saved to ./{OUTPUT_DIR}/")
+    logger.info(f"{'='*60}")
 
 
 if __name__ == "__main__":
