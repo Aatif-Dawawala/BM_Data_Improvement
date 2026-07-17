@@ -1,0 +1,115 @@
+2026-07-17 18:32:00 | INFO     | Log file: /home/aatif/docs/repos/BM_Data_Improvement/agent_logs/run_20260717_183200.log
+2026-07-17 18:32:00 | INFO     | 
+============================================================
+2026-07-17 18:32:00 | INFO     | Starting review of 1 lesson(s)...
+2026-07-17 18:32:00 | INFO     | ============================================================
+2026-07-17 18:32:00 | INFO     | 
+[1/1] Processing l-001...
+2026-07-17 18:32:00 | INFO     | 
+→ Fetching lesson l-001...
+2026-07-17 18:32:03 | INFO     | 
+  Reviewing lesson content: Al-Fatiha: The Opener
+2026-07-17 18:32:03 | INFO     |     [Review Agent [1/3]] running for lesson l-001 content...
+2026-07-17 18:32:24 | DEBUG    | 
+========================================================================
+AGENT : Review Agent [1/3]
+LABEL : lesson l-001 content
+========================================================================
+--- SYSTEM PROMPT ---
+You are a rigorous but fair content reviewer for an Islamic educational app.
+Your job is to review Quranic lesson content written for English-speaking beginners with NO prior Arabic knowledge.
+
+WHAT TO FLAG:
+- Factual errors: incorrect surah details, wrong ayah counts, mistaken scholarly facts
+- Translation issues: English explanations that misrepresent or oversimplify Arabic meaning to the point of distortion
+- Theological framing: presenting one interpretation as the only one, when notable scholarly disagreement exists
+- Beginner accessibility: jargon used without explanation, assumed knowledge a beginner wouldn't have
+- Narrative clarity: confusing sentence structure, ambiguous phrasing, poor logical flow
+
+WHAT NOT TO FLAG:
+- Deliberate simplification appropriate for beginners (e.g., short definitions are fine)
+- Minor stylistic preferences
+- Do NOT make rulings on which tafsir is "correct" — only flag where a claim is clearly erroneous by scholarly consensus
+
+FIELD GUIDANCE (your response will be validated against this schema):
+- location: where the issue appears (e.g. "summary", "story paragraph 3")
+- issue_type: factual_error | translation_issue | theological_framing | accessibility | narrative_clarity
+- severity: critical | warning | note
+- description: what the problem is (1-2 sentences)
+- suggested_fix: a concrete suggestion (1 sentence)
+
+Only flag issues you are confident about. Return an empty list if the content is sound.
+
+--- USER INPUT ---
+LESSON ID: l-001
+TITLE: Al-Fatiha: The Opener
+METADATA: Mecca - 7 Ayahs
+SUMMARY: Explore the magical journey of Surah Al-Fatiha, where we learn to say 'thank you' to Allah and ask Him to help us make good choices!
+
+--- LESSON STORY / EXPLANATION TEXT ---
+Imagine walking through a vast desert, seeking the right path. Surah Al-Fatiha is like a guiding star in the night sky, showing the way.
+It's a conversation between us and Allah, full of hope, guidance, and wisdom, a treasure for every Muslim, young and old.
+Surah Al-Fatiha, also known as 'The Opening', is the first chapter of the Quran and was revealed in Mecca. It's a prayer that Muslims recite in every unit of their prayers, asking Allah for guidance, mercy, and help.
+This Surah was revealed to the Prophet Muhammad (peace be upon him) as a form of guidance, not just for him but for all of humanity. It sets the foundation for the rest of the Quran, summarizing the essence of the Quran's message in just seven verses. It's a conversation between us and Allah, showing us how to praise Him, ask for help, and seek guidance on the straight path.
+Let's read the surah together...
+Let's learn some words from this surah. To memorize, repeat each word three times with its meaning.
+The words are now shown in the context of the Surah. Try to understand their meaning first, then tap to check.
+
+--- RAW OUTPUT ---
+{
+  "issues": [
+    {
+      "location": "summary",
+      "issue_type": "narrative_clarity",
+      "severity": "warning",
+      "description": "The word 'magical' carries connotations of sorcery or supernatural fantasy, which is theologically inappropriate in an Islamic educational context when describing the Quran.",
+      "suggested_fix": "Replace 'magical journey' with 'wonderful journey' or 'meaningful journey'."
+    },
+    {
+      "location": "summary",
+      "issue_type": "translation_issue",
+      "severity": "warning",
+      "description": "Describing Al-Fatiha as teaching us to 'say thank you to Allah' is an oversimplification that distorts its meaning — the surah primarily encompasses praise (hamd), worship, and supplication for guidance, not merely gratitude.",
+      "suggested_fix": "Replace with something like 'where we learn to praise Allah and ask Him to guide us on the right path'."
+    },
+    {
+      "location": "story paragraph 3 (recitation in every unit of prayer)",
+      "issue_type": "theological_framing",
+      "severity": "warning",
+      "description": "Stating that Muslims recite Al-Fatiha 'in every unit of their prayers' presents one jurisprudential position as universal fact; scholars differ on whether it is obligatory for followers praying behind an imam (e.g., Hanafi vs. Shafi'i positions).",
+      "suggested_fix": "Soften to 'in each unit of the daily prayers' or add a brief qualifier such as 'in most schools of Islamic law'."
+    },
+    {
+      "location": "story paragraph 4 (revealed as guidance 'for all of humanity')",
+      "issue_type": "theological_framing",
+      "severity": "note",
+      "description": "While the Quran as a whole is guidance for all of humanity, framing the revelation of Al-Fatiha specifically as sent 'not just for him but for all of humanity' conflates the universal scope of the Quran's message with the particular occasion of the surah's revelation, which could confuse beginners.",
+      "suggested_fix": "Rephrase to: 'revealed to the Prophet Muhammad (peace be upon him) as a guide for all Muslims and, through Islam, all of humanity'."
+    },
+    {
+      "location": "metadata / story paragraph 3",
+      "issue_type": "factual_error",
+      "severity": "critical",
+      "description": "There is notable scholarly disagreement about whether Al-Fatiha is a Meccan surah. While the majority view is Meccan, some classical scholars (e.g., based on the report of Abu Hurayrah) argue it was revealed in Medina, or that it was revealed twice. Presenting 'Mecca' as a definitive, unqualified fact misrepresents this discussion.",
+      "suggested_fix": "Add a brief qualifier such as 'according to the majority of scholars, revealed in Mecca' to acknowledge the existing scholarly discussion."
+    },
+    {
+      "location": "story paragraph 4 ('summarizing the essence of the Quran's message in just seven verses')",
+      "issue_type": "theological_framing",
+      "severity": "note",
+      "description": "Claiming Al-Fatiha 'summarizes the essence of the Quran's message' is a popular but interpretive statement, not an established scholarly consensus, and may overstate the case for beginners.",
+      "suggested_fix": "Reframe as 'many scholars describe it as encapsulating key themes of the Quran' to make clear this is an interpretive perspective."
+    },
+    {
+      "location": "story paragraph 1 (desert/guiding star metaphor)",
+      "issue_type": "accessibility",
+      "severity": "note",
+      "description": "The opening metaphor of a 'vast desert' and 'guiding star' is evocative but may feel disconnected for beginner readers before any context about the surah is given; the metaphor is not unpacked or linked back to Al-Fatiha's content.",
+      "suggested_fix": "Add one sentence connecting the metaphor to Al-Fatiha's theme of guidance, e.g., 'Just as a star lights your way through darkness, this surah asks Allah to guide us on the straight path'."
+    }
+  ]
+}
+========================================================================
+
+2026-07-17 18:32:24 | INFO     |     [Guardrail Agent] evaluating 7 flag(s) for lesson l-001 content...
+2026-07-17 18:32:24 | INFO     |     [Guardrail Agent [2/3]] running for lesson l-001 content...

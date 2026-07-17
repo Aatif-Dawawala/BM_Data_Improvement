@@ -24,7 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import anthropic
+import openai
+import instructor
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -39,10 +40,36 @@ BASE_URL = "https://europe-west2-brilliantmuslim.cloudfunctions.net/mobile-api"
 COURSE_URL = f"{BASE_URL}/course?course_id=c-001"
 OUTPUT_DIR = Path("./lesson_reports")
 LOG_DIR = Path("./agent_logs")
-MODEL = "claude-sonnet-4-6"          # always use Sonnet 4.6 for inner calls; outer calls use same
-MAX_TOKENS = 2048
+# Change MODEL to any model available on OpenRouter.
+# Full list: https://openrouter.ai/models
+#
+# Anthropic via OpenRouter:
+#   'anthropic/claude-sonnet-4-6'   (default — fast + cheap)
+#   'anthropic/claude-opus-4-6'     (highest quality)
+#   'anthropic/claude-haiku-4-5'    (fastest)
+#
+# Other providers (no other code changes needed):
+#   'openai/gpt-4o'
+#   'google/gemini-2.5-pro'
+#   'meta-llama/llama-3.3-70b-instruct'
+MODEL = "anthropic/claude-sonnet-4-6"
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Per-agent token budgets.
+# The guardrail and revision agents receive more context (original content +
+# prior agent output), so they need larger budgets than the review agent.
+# Raise these if you see IncompleteOutputException on particularly large lessons.
+MAX_TOKENS_REVIEW   = 2048   # Step 1: review agent — issues list only
+MAX_TOKENS_GUARDRAIL = 4096  # Step 2: guardrail — receives content + prior issues
+MAX_TOKENS_REVISION  = 4096  # Step 3: revision — receives content + guardrail output
+
+# Max retries instructor will attempt if the model returns malformed/incomplete output
+INSTRUCTOR_MAX_RETRIES = 3
+
+_openrouter_client = openai.OpenAI(
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    base_url="https://openrouter.ai/api/v1",
+)
+client = instructor.from_openai(_openrouter_client)
 
 # ---------------------------------------------------------------------------
 # Logging Setup
@@ -141,6 +168,21 @@ class ReviewIssue(BaseModel):
 class ReviewResult(BaseModel):
     target: str                   # "lesson_content" | quiz_id
     issues: list[ReviewIssue]
+
+
+# Structured output models for each agent (used by instructor for auto-parsing)
+
+class ReviewAgentOutput(BaseModel):
+    issues: list[ReviewIssue] = Field(default_factory=list)
+
+
+class GuardrailAgentOutput(BaseModel):
+    keep: list[ReviewIssue] = Field(default_factory=list)
+    add: list[ReviewIssue] = Field(default_factory=list)
+
+
+class RevisionAgentOutput(BaseModel):
+    issues: list[ReviewIssue] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -317,15 +359,14 @@ WHAT NOT TO FLAG:
 - Minor stylistic preferences
 - Do NOT make rulings on which tafsir is "correct" — only flag where a claim is clearly erroneous by scholarly consensus
 
-OUTPUT FORMAT:
-Return a JSON array of issues. Each issue must have:
-- "location": where in the lesson the issue appears (e.g., "summary", "story paragraph 3")
-- "issue_type": one of: factual_error | translation_issue | theological_framing | accessibility | narrative_clarity
-- "severity": one of: critical | warning | note
-- "description": what the problem is (1-2 sentences)
-- "suggested_fix": a concrete suggestion to fix it (1 sentence)
+FIELD GUIDANCE (your response will be validated against this schema):
+- location: where the issue appears (e.g. "summary", "story paragraph 3")
+- issue_type: factual_error | translation_issue | theological_framing | accessibility | narrative_clarity
+- severity: critical | warning | note
+- description: what the problem is (1-2 sentences)
+- suggested_fix: a concrete suggestion (1 sentence)
 
-Only flag issues you are confident about. Return [] if the content is sound. Return ONLY the JSON array, no preamble."""
+Only flag issues you are confident about. Return an empty list if the content is sound."""
 
 
 QUIZ_REVIEW_PROMPT = """You are a rigorous reviewer for an Islamic educational app's quiz questions.
@@ -341,15 +382,14 @@ WHAT TO FLAG per question:
 - Fill-in-blank or drag-drop: missing words, wrong correct list, poor blank placement
 - Drag-drop: given_list includes items that make correct answer too obvious or too obscure
 
-OUTPUT FORMAT:
-Return a JSON array of issues. Each issue must have:
-- "location": question ID and field (e.g., "q-3 explanation", "q-7 correctList")
-- "issue_type": one of: factual_error | wrong_answer | ambiguous_choice | poor_distractor | unclear_explanation | fitb_error | drag_drop_error
-- "severity": one of: critical | warning | note
-- "description": what the problem is (1-2 sentences)
-- "suggested_fix": a concrete suggestion (1 sentence)
+FIELD GUIDANCE (your response will be validated against this schema):
+- location: question ID and field (e.g. "q-3 explanation", "q-7 correctList")
+- issue_type: factual_error | wrong_answer | ambiguous_choice | poor_distractor | unclear_explanation | fitb_error | drag_drop_error
+- severity: critical | warning | note
+- description: what the problem is (1-2 sentences)
+- suggested_fix: a concrete suggestion (1 sentence)
 
-Only flag genuine issues. Return [] if the quiz is solid. Return ONLY the JSON array, no preamble."""
+Only flag genuine issues. Return an empty list if the quiz is solid."""
 
 
 GUARDRAIL_PROMPT = """You are a second-pass quality controller reviewing a list of flagged issues from an AI content reviewer.
@@ -362,17 +402,12 @@ FOR EACH FLAGGED ISSUE, evaluate:
 2. Is the severity appropriate? (Upgrade or downgrade if needed)
 3. Is the suggested fix actually helpful?
 
-You may also ADD new issues the first reviewer missed (set "is_new": true for these).
+You may also ADD new issues the first reviewer missed.
 
-OUTPUT FORMAT:
-Return a JSON object with two keys:
-- "keep": array of issue objects to retain (same schema as input, you may edit fields)
-- "add": array of new issue objects the first reviewer missed (same schema)
-
-Each issue schema:
-- "location", "issue_type", "severity", "description", "suggested_fix"
-
-Return ONLY the JSON object, no preamble."""
+FIELD GUIDANCE (your response will be validated against this schema):
+- keep: list of issues to retain (you may edit severity or suggested_fix)
+- add: list of new issues the first reviewer missed
+Each issue has: location, issue_type, severity, description, suggested_fix"""
 
 
 REVISION_PROMPT = """You are a content reviewer for an Islamic educational app.
@@ -386,92 +421,102 @@ Below is the guardrail reviewer's output. Produce your FINAL, revised issue list
 2. Incorporating any new issues they added
 3. Re-ordering by severity: critical → warning → note
 
-OUTPUT FORMAT:
-Return a JSON array of the final issues (same schema: location, issue_type, severity, description, suggested_fix).
-Return ONLY the JSON array, no preamble."""
+FIELD GUIDANCE (your response will be validated against this schema):
+- issues: the final ordered list of issues (critical -> warning -> note)
+Each issue has: location, issue_type, severity, description, suggested_fix"""
 
 # ---------------------------------------------------------------------------
 # Two-Agent Pipeline (Review → Guardrail → Review)
 # ---------------------------------------------------------------------------
 
-def _call_claude(agent_name: str, label: str, system: str, user: str) -> str:
-    """Single Claude API call. Logs full input/output to the log file and returns text."""
-    logger.info(f"    [{agent_name}] running for {label}...")
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    raw_output = response.content[0].text.strip()
-    _log_agent_call(agent_name, label, system, user, raw_output)
-    return raw_output
-
-
-def _safe_parse_json(text: str) -> list | dict:
-    """Strip markdown fences and parse JSON."""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    text = text.strip().rstrip("```").strip()
-    return json.loads(text)
-
-
-def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -> list[dict]:
+def _call_instructor(
+    agent_name: str,
+    label: str,
+    system: str,
+    user: str,
+    response_model: type[BaseModel],
+    max_tokens: int = MAX_TOKENS_REVIEW,
+) -> BaseModel:
     """
-    Runs the Review → Guardrail → Revised Review loop.
-    Returns the final list of issue dicts.
+    Call the LLM via instructor and get back a validated Pydantic object.
+    instructor injects the JSON schema, parses the response, and retries on
+    validation errors automatically.
+
+    To switch models: change MODEL at the top of this file.
+    To switch providers: replace `client` with instructor.from_openai(openai.OpenAI())
+    and set MODEL to the appropriate model string.
+    """
+    logger.info(f"    [{agent_name}] running for {label}...")
+
+    result = client.chat.completions.create(
+        model=MODEL,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_model=response_model,
+        max_retries=INSTRUCTOR_MAX_RETRIES,
+    )
+
+    # Log the validated output as JSON (no raw text needed — instructor guaranteed it parsed)
+    _log_agent_call(agent_name, label, system, user, result.model_dump_json(indent=2))
+    return result
+
+
+def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -> list[ReviewIssue]:
+    """
+    Runs the Review -> Guardrail -> Revised Review loop.
+    Each agent returns a validated Pydantic object. No manual JSON parsing needed.
+    Returns the final list of ReviewIssue objects.
     """
     # --- Step 1: Review Agent ---
-    raw_review = _call_claude("Review Agent [1/3]", label, system_prompt, content_payload)
-
-    try:
-        initial_issues = _safe_parse_json(raw_review)
-        if not isinstance(initial_issues, list):
-            initial_issues = []
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.warning(f"    [WARN] Review Agent JSON parse failed for {label}: {e}")
-        initial_issues = []
+    review_out: ReviewAgentOutput = _call_instructor(
+        "Review Agent [1/3]", label,
+        system_prompt, content_payload,
+        ReviewAgentOutput,
+        max_tokens=MAX_TOKENS_REVIEW,
+    )
+    initial_issues = review_out.issues
 
     if not initial_issues:
         logger.info(f"    → No issues found in initial review for {label}.")
         return []
 
     # --- Step 2: Guardrail Agent ---
+    # Receives content + prior issues, so needs more headroom than the review agent
     logger.info(f"    [Guardrail Agent] evaluating {len(initial_issues)} flag(s) for {label}...")
     guardrail_payload = (
         f"Original content context:\n{content_payload}\n\n"
-        f"First reviewer's flagged issues:\n{json.dumps(initial_issues, indent=2)}"
+        f"First reviewer's flagged issues:\n"
+        + json.dumps([i.model_dump() for i in initial_issues], indent=2)
     )
-    raw_guardrail = _call_claude("Guardrail Agent [2/3]", label, GUARDRAIL_PROMPT, guardrail_payload)
-
-    try:
-        guardrail_result = _safe_parse_json(raw_guardrail)
-        kept = guardrail_result.get("keep", []) if isinstance(guardrail_result, dict) else initial_issues
-        added = guardrail_result.get("add", []) if isinstance(guardrail_result, dict) else []
-    except (json.JSONDecodeError, ValueError, AttributeError) as e:
-        logger.warning(f"    [WARN] Guardrail JSON parse failed for {label}: {e}")
-        kept, added = initial_issues, []
+    guardrail_out: GuardrailAgentOutput = _call_instructor(
+        "Guardrail Agent [2/3]", label,
+        GUARDRAIL_PROMPT, guardrail_payload,
+        GuardrailAgentOutput,
+        max_tokens=MAX_TOKENS_GUARDRAIL,
+    )
 
     # --- Step 3: Revision Agent ---
+    # Receives content + guardrail output, so also needs a larger budget
     revision_payload = (
         f"Original content:\n{content_payload}\n\n"
-        f"Guardrail output:\n{json.dumps({'keep': kept, 'add': added}, indent=2)}"
+        f"Guardrail output:\n"
+        + json.dumps({
+            "keep": [i.model_dump() for i in guardrail_out.keep],
+            "add":  [i.model_dump() for i in guardrail_out.add],
+        }, indent=2)
     )
-    raw_final = _call_claude("Revision Agent [3/3]", label, REVISION_PROMPT, revision_payload)
+    revision_out: RevisionAgentOutput = _call_instructor(
+        "Revision Agent [3/3]", label,
+        REVISION_PROMPT, revision_payload,
+        RevisionAgentOutput,
+        max_tokens=MAX_TOKENS_REVISION,
+    )
 
-    try:
-        final_issues = _safe_parse_json(raw_final)
-        if not isinstance(final_issues, list):
-            final_issues = kept + added
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.warning(f"    [WARN] Revision Agent JSON parse failed for {label}: {e}")
-        final_issues = kept + added
-
-    logger.info(f"    → Final: {len(final_issues)} issue(s) for {label}.")
-    return final_issues
+    logger.info(f"    → Final: {len(revision_out.issues)} issue(s) for {label}.")
+    return revision_out.issues
 
 
 # ---------------------------------------------------------------------------
@@ -605,11 +650,13 @@ def review_lesson(lesson_id: str) -> Optional[str]:
 
     # --- Track 1: Lesson content review ---
     lesson_payload = serialize_lesson_for_review(lesson)
-    lesson_issues = run_two_agent_review(
-        system_prompt=LESSON_CONTENT_REVIEW_PROMPT,
-        content_payload=lesson_payload,
-        label=f"lesson {lesson_id} content",
-    )
+    lesson_issues = [
+        i.model_dump() for i in run_two_agent_review(
+            system_prompt=LESSON_CONTENT_REVIEW_PROMPT,
+            content_payload=lesson_payload,
+            label=f"lesson {lesson_id} content",
+        )
+    ]
 
     # --- Track 2: Per-quiz review (separate call per quiz type) ---
     quiz_results: list[tuple[QuizContent, list[dict]]] = []
@@ -617,11 +664,13 @@ def review_lesson(lesson_id: str) -> Optional[str]:
         logger.info(f"\n  Reviewing quiz: {quiz.quiz_title} ({quiz.quiz_type_label})")
         quiz_payload = serialize_quiz_for_review(quiz)
         quiz_system = QUIZ_REVIEW_PROMPT.format(quiz_type=quiz.quiz_type_label)
-        quiz_issues = run_two_agent_review(
-            system_prompt=quiz_system,
-            content_payload=quiz_payload,
-            label=f"quiz {quiz.quiz_id}",
-        )
+        quiz_issues = [
+            i.model_dump() for i in run_two_agent_review(
+                system_prompt=quiz_system,
+                content_payload=quiz_payload,
+                label=f"quiz {quiz.quiz_id}",
+            )
+        ]
         quiz_results.append((quiz, quiz_issues))
 
     # --- Build report ---
