@@ -1,3 +1,1 @@
-# Set up log file to see input and output for each agent & cost for each run - DONE
-# Tweak system prompt manually after checking if the feedback matches well with the content - start with doing this for a quiz since they have more factual errors
 # Use Pydantic and OpenRouter instead of Claude API directly - Set temperature to 0
