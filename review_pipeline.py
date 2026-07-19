@@ -451,6 +451,7 @@ def _call_instructor(
     result = client.chat.completions.create(
         model=MODEL,
         max_tokens=max_tokens,
+        temperature=0,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
