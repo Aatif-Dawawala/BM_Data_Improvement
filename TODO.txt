@@ -1,1 +1,0 @@
-# Use Pydantic and OpenRouter instead of Claude API directly - Set temperature to 0
