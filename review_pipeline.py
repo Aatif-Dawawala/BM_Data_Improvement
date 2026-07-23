@@ -52,13 +52,13 @@ LOG_DIR = Path("./agent_logs")
 #   'openai/gpt-4o'
 #   'google/gemini-2.5-pro'
 #   'meta-llama/llama-3.3-70b-instruct'
-MODEL = "anthropic/claude-sonnet-5"
+MODEL = "z-ai/glm-5.2"
 
 # Per-agent token budgets.
 # The guardrail and revision agents receive more context (original content +
 # prior agent output), so they need larger budgets than the review agent.
 # Raise these if you see IncompleteOutputException on particularly large lessons.
-MAX_TOKENS_REVIEW   = 2048   # Step 1: review agent — issues list only
+MAX_TOKENS_REVIEW   = 4096   # Step 1: review agent — issues list only
 MAX_TOKENS_GUARDRAIL = 4096  # Step 2: guardrail — receives content + prior issues
 MAX_TOKENS_REVISION  = 4096  # Step 3: revision — receives content + guardrail output
 

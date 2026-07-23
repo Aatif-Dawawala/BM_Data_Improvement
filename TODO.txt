@@ -1,8 +1,5 @@
-- Try Sonnet 5, Gemeni 3.6 Flash
-    - Evaluate which is better for our context
 
 - Add criteria to check alignment between answer and explanation
-- Make sure the issues the model is detecting are actually issues
 
 - Make sure the changes the model wants to make are actually fixing the issue and are relative.
 
