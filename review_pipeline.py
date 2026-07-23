@@ -52,7 +52,7 @@ LOG_DIR = Path("./agent_logs")
 #   'openai/gpt-4o'
 #   'google/gemini-2.5-pro'
 #   'meta-llama/llama-3.3-70b-instruct'
-MODEL = "anthropic/claude-sonnet-4-6"
+MODEL = "anthropic/claude-sonnet-5"
 
 # Per-agent token budgets.
 # The guardrail and revision agents receive more context (original content +
