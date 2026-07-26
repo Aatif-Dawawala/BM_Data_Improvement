@@ -52,15 +52,15 @@ LOG_DIR = Path("./agent_logs")
 #   'openai/gpt-4o'
 #   'google/gemini-2.5-pro'
 #   'meta-llama/llama-3.3-70b-instruct'
-MODEL = "z-ai/glm-5.2"
+MODEL = "deepseek/deepseek-v4-flash"
 
-# Per-agent token budgets.
-# The guardrail and revision agents receive more context (original content +
-# prior agent output), so they need larger budgets than the review agent.
-# Raise these if you see IncompleteOutputException on particularly large lessons.
-MAX_TOKENS_REVIEW   = 4096   # Step 1: review agent — issues list only
-MAX_TOKENS_GUARDRAIL = 4096  # Step 2: guardrail — receives content + prior issues
-MAX_TOKENS_REVISION  = 4096  # Step 3: revision — receives content + guardrail output
+# Per-agent token budgets (output tokens only).
+# These are set high deliberately — instructor's structured output adds overhead
+# on top of the actual content, and hitting the limit causes IncompleteOutputException.
+# Lower them only if you are being charged too much and outputs are consistently small.
+MAX_TOKENS_REVIEW    = 8192   # Step 1: review agent — issues list only
+MAX_TOKENS_GUARDRAIL = 8192   # Step 2: guardrail — receives content + prior issues
+MAX_TOKENS_REVISION  = 8192   # Step 3: revision — receives content + guardrail output
 
 # Max retries instructor will attempt if the model returns malformed/incomplete output
 INSTRUCTOR_MAX_RETRIES = 3
@@ -382,9 +382,15 @@ WHAT TO FLAG per question:
 - Fill-in-blank or drag-drop: missing words, wrong correct list, poor blank placement
 - Drag-drop: given_list includes items that make correct answer too obvious or too obscure
 
+BINARY CHOICE QUESTIONS (questionType: "binary_choice"):
+- Answer options must be 1-2 words only (e.g. "Yes" / "No", "True" / "False")
+- Flag any binary_choice answer option that exceeds 2 words as a binary_choice_too_long issue
+- If the question concept genuinely requires longer answer options to be unambiguous, flag it
+  as needs_multiple_choice and suggest converting it to a multiple_choice question instead
+
 FIELD GUIDANCE (your response will be validated against this schema):
 - location: question ID and field (e.g. "q-3 explanation", "q-7 correctList")
-- issue_type: factual_error | wrong_answer | ambiguous_choice | poor_distractor | unclear_explanation | fitb_error | drag_drop_error
+- issue_type: factual_error | wrong_answer | ambiguous_choice | poor_distractor | unclear_explanation | fitb_error | drag_drop_error | binary_choice_too_long | needs_multiple_choice
 - severity: critical | warning | note
 - description: what the problem is (1-2 sentences)
 - suggested_fix: a concrete suggestion (1 sentence)
@@ -470,15 +476,24 @@ def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -
     Runs the Review -> Guardrail -> Revised Review loop.
     Each agent returns a validated Pydantic object. No manual JSON parsing needed.
     Returns the final list of ReviewIssue objects.
+
+    If any agent hits a token limit (IncompleteOutputException), the error is
+    caught, logged as a warning, and the pipeline returns whatever it has so far
+    rather than crashing the entire run.
     """
     # --- Step 1: Review Agent ---
-    review_out: ReviewAgentOutput = _call_instructor(
-        "Review Agent [1/3]", label,
-        system_prompt, content_payload,
-        ReviewAgentOutput,
-        max_tokens=MAX_TOKENS_REVIEW,
-    )
-    initial_issues = review_out.issues
+    try:
+        review_out: ReviewAgentOutput = _call_instructor(
+            "Review Agent [1/3]", label,
+            system_prompt, content_payload,
+            ReviewAgentOutput,
+            max_tokens=MAX_TOKENS_REVIEW,
+        )
+        initial_issues = review_out.issues
+    except Exception as e:
+        logger.warning(f"    [WARN] Review Agent failed for {label}: {e}")
+        logger.warning(f"    [WARN] Skipping remaining agents for {label}. Try increasing MAX_TOKENS_REVIEW.")
+        return []
 
     if not initial_issues:
         logger.info(f"    → No issues found in initial review for {label}.")
@@ -492,12 +507,17 @@ def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -
         f"First reviewer's flagged issues:\n"
         + json.dumps([i.model_dump() for i in initial_issues], indent=2)
     )
-    guardrail_out: GuardrailAgentOutput = _call_instructor(
-        "Guardrail Agent [2/3]", label,
-        GUARDRAIL_PROMPT, guardrail_payload,
-        GuardrailAgentOutput,
-        max_tokens=MAX_TOKENS_GUARDRAIL,
-    )
+    try:
+        guardrail_out: GuardrailAgentOutput = _call_instructor(
+            "Guardrail Agent [2/3]", label,
+            GUARDRAIL_PROMPT, guardrail_payload,
+            GuardrailAgentOutput,
+            max_tokens=MAX_TOKENS_GUARDRAIL,
+        )
+    except Exception as e:
+        logger.warning(f"    [WARN] Guardrail Agent failed for {label}: {e}")
+        logger.warning(f"    [WARN] Returning Review Agent output unguarded. Try increasing MAX_TOKENS_GUARDRAIL.")
+        return initial_issues
 
     # --- Step 3: Revision Agent ---
     # Receives content + guardrail output, so also needs a larger budget
@@ -509,12 +529,17 @@ def run_two_agent_review(system_prompt: str, content_payload: str, label: str) -
             "add":  [i.model_dump() for i in guardrail_out.add],
         }, indent=2)
     )
-    revision_out: RevisionAgentOutput = _call_instructor(
-        "Revision Agent [3/3]", label,
-        REVISION_PROMPT, revision_payload,
-        RevisionAgentOutput,
-        max_tokens=MAX_TOKENS_REVISION,
-    )
+    try:
+        revision_out: RevisionAgentOutput = _call_instructor(
+            "Revision Agent [3/3]", label,
+            REVISION_PROMPT, revision_payload,
+            RevisionAgentOutput,
+            max_tokens=MAX_TOKENS_REVISION,
+        )
+    except Exception as e:
+        logger.warning(f"    [WARN] Revision Agent failed for {label}: {e}")
+        logger.warning(f"    [WARN] Returning guardrail output as final. Try increasing MAX_TOKENS_REVISION.")
+        return guardrail_out.keep + guardrail_out.add
 
     logger.info(f"    → Final: {len(revision_out.issues)} issue(s) for {label}.")
     return revision_out.issues
