@@ -190,11 +190,21 @@ class RevisionAgentOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 def fetch_json(url: str) -> dict:
-    """Fetch JSON from a URL with basic error handling."""
+    """Fetch JSON from a URL with basic error handling. Logs the raw response at DEBUG level."""
     try:
         r = requests.get(url, timeout=15)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        logger.debug(
+            "\n%s\nAPI FETCH\nURL   : %s\nSTATUS: %s\n%s\n%s\n%s\n",
+            "-" * 72,
+            url,
+            r.status_code,
+            "-" * 72,
+            json.dumps(data, indent=2, ensure_ascii=False),
+            "-" * 72,
+        )
+        return data
     except requests.RequestException as e:
         logger.warning(f"  [WARN] Failed to fetch {url}: {e}")
         return {}
