@@ -1,7 +1,4 @@
 
-- Add criteria to check alignment between answer and explanation
-
-- Make sure the changes the model wants to make are actually fixing the issue and are relative.
 
 
 - Try to have the model make changes to the JSON file of the lesson
